@@ -1,0 +1,29 @@
+For normal use:
+
+sudo dpkg -i cuda-repo-ubuntu1704_9.1.85-1_amd64.deb
+sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu1704/x86_64/7fa2af80.pub
+sudo apt-get install cuda
+wget https://repo.continuum.io/miniconda/Miniconda3-latest-Linux-x86_64.sh
+bash Miniconda3-latest-Linux-x86_64.sh 
+conda install pytorch torchvision cuda90 -c pytorch
+conda install numpy scipy matplotlib scikit-image
+pip install pygame
+
+
+
+For weight transfer:
+Install Lasagne and Theano master as of 17 Oct 2017:
+  Theano   ecc0c2b30dabb7934420e5a1b338b02397845485
+  Lasagne  20efd95de558a613a138f3e3e6cd690008f48ca6
+Theano:
+cd Theano
+git checkout ecc0c2b30dabb7934420e5a1b338b02397845485
+pip2 install --user -e .
+Lasagne:
+cd Lasagne
+git checkout ecc0c2b30dabb7934420e5a1b338b02397845485
+pip2 install --user -e .
+
+# Install torch
+pip2 install http://download.pytorch.org/whl/cu90/torch-0.3.0.post4-cp27-cp27mu-linux_x86_64.whl 
+

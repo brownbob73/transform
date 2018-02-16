@@ -15,7 +15,8 @@ import torch.optim
 import torch.utils.data
 from torchvision.utils import make_grid, save_image
 
-from encoder import Encoder, Discriminator
+from encoder import Encoder
+from discriminator import Discriminator
 from decoder import Decoder
 from dataset import FacesDataset
 from openface import prepareOpenFace
@@ -30,8 +31,7 @@ class Evaluator:
         self.openface = openface
         self.upscale_1024 = nn.Upsample(size=(1024,1024))
         self.upscale_768 = nn.Upsample(size=(768,768))
-        self.downscale_2x = nn.AvgPool2d(kernel_size=(2,2))
-        self.downscale_4x = nn.AvgPool2d(kernel_size=(4,4))
+        self.downscale_32x = nn.AvgPool2d(kernel_size=(32,32))
         self.downscale_8x = nn.AvgPool2d(kernel_size=(8,8))
 
         for p in self.decoder.parameters():
@@ -42,45 +42,37 @@ class Evaluator:
             p.requires_grad = False
 
 
-    def loss(self, input_256):
-        batch_size = input_256.size()[0]
-        input_768 = self.upscale_768(input_256)
-        input_96 = self.downscale_8x(input_768)
-        input_32 = self.downscale_8x(input_256)
+    def loss(self, input_1024):
+        batch_size = input_1024.size()[0]
+        input_96 = self.downscale_8x(self.upscale_768(self.downscale_8x(input_1024)))
+        input_32 = self.downscale_32x(input_1024)
 
         input_96_rescaled = (input_96 - input_96.min()) / (input_96.max() - input_96.min())
         input_32_rescaled = (input_32 - input_32.min()) / (input_32.max() - input_32.min())
 
         input_id_128, _ = self.openface(input_96_rescaled)
-        latent_512 = self.encoder(input_id_128).view(-1, 512, 1, 1)
-        error_norm = torch.abs(torch.sum(torch.pow(latent_512, 2)) - 512*batch_size) / np.sqrt(1024.0*batch_size)     # Smaller values better, typical range 0..2
+
+        latent_input_features = input_id_128
+        latent_512 = self.encoder(latent_input_features).view(-1, 512, 1, 1)
+        error_norm = torch.norm(latent_512)
 
         output_1024 = self.decoder(latent_512)
-        output_256 = self.downscale_4x(output_1024)
-        output_256_rescaled = (output_256 - output_256.min()) / (output_256.max() - output_256.min())
-        output_32 = self.downscale_8x(output_256)
-        output_768 = self.upscale_768(output_256)
-        output_96 = self.downscale_8x(output_768)
+        output_96 = self.downscale_8x(self.upscale_768(self.downscale_8x(output_1024)))
+        output_32 = self.downscale_32x(output_1024)
 
         output_96_rescaled = (output_96 - output_96.min()) / (output_96.max() - output_96.min())
         output_32_rescaled = (output_32 - output_32.min()) / (output_32.max() - output_32.min())
 
         output_id_128, _ = self.openface(output_96_rescaled)
         
-        mse = torch.sum(torch.pow(input_32_rescaled - output_32_rescaled, 2)) / input_32_rescaled.data.nelement()
+        error_mse = torch.sum(torch.pow(input_32_rescaled - output_32_rescaled, 2)) / input_32_rescaled.data.nelement()
         similarity = nn.CosineSimilarity()(input_id_128, output_id_128)
-
-        # Cosine similarity of random (elementwise N(0,1)) 512-vectors is ~ N(0, 0.44).
-        # Sum of squares is ~ ChiSq(512*k) ~= N(512*k, sqrt(1024*k)), with k the minibatch size.
-        # Use this to normalise the losses.
-        error_identity = (-similarity / 1.76)+0.5                                             # Smaller values better, typical (random) range 0..1
 #        error_discrim = self.discriminator(output_1024)
-        error_mse = mse / 0.167
+        error_discrim = 0
 
-        # loss = error_identity + error_mse + error_norm + error_discrim
-        loss = error_mse*10 + torch.pow(error_norm/2, 4)
-#        return loss, (error_identity, error_norm, error_mse, error_discrim), output_256_rescaled
-        return loss, (error_identity, error_norm, error_mse), output_256_rescaled
+#        loss = torch.mean(-similarity + error_mse + error_norm) #+ error_discrim
+        loss = torch.mean(-similarity + error_norm/16.0)
+        return loss, (-similarity, error_norm, error_mse, error_discrim), output_1024
 
 
 
@@ -139,13 +131,14 @@ def save_grid(input, output, file):
 
 def train_encoder_batch(input, evaluator, optimiser, i_batch):
     optimiser.zero_grad()
-    loss, subloss, output_256_rescaled = evaluator.loss(input)
+    loss, subloss, output = evaluator.loss(input)
 #    print(f'Iter {i_batch}: IDL {subloss[0].data[0]}  NRM {subloss[1].data[0]}  MSE {subloss[2].data[0]}  DIS {subloss[3].data[0]}')
     print(f'Iter {i_batch}: IDL {subloss[0].data[0]}  NRM {subloss[1].data[0]}  MSE {subloss[2].data[0]}')
     loss.backward()
     optimiser.step()
     if i_batch % 10 == 0:
-        save_grid(input, output_256_rescaled, f'chk{i_batch}.jpg')
+        output_rescaled = (output - torch.min(output))/(torch.max(output)-torch.min(output))
+        save_grid(input, output_rescaled, f'chk{i_batch}.jpg')
 
 
 
@@ -153,11 +146,11 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser(description='Inference demo')
-    parser.add_argument('--images', default='images/final/256', type=str, metavar='PATH', help='path to image library')
-    parser.add_argument('--decoder', default='models_final/decoder-010804.pth', type=str, metavar='PATH', help='path to decoder model (as PyTorch state dict)')
-    parser.add_argument('--discriminator', default='models_final/discriminator-010804.pth', type=str, metavar='PATH', help='path to discriminator model (as PyTorch state dict)')
-    parser.add_argument('--openface', default='models_final/openface-20180119.pth', type=str, metavar='PATH', help='path to OpenFace one-shot model (as PyTorch state dict)')
-    parser.add_argument('--encoder', default='models_inprogress/encoder/', type=str, metavar='PATH', help='path to encoder model working directory')
+    parser.add_argument('--images', default='/mnt/data/celeba/nvidia_hq', type=str, metavar='PATH', help='path to image library')
+    parser.add_argument('--decoder', default='models/final/decoder-010804.pth', type=str, metavar='PATH', help='path to decoder model (as PyTorch state dict)')
+    parser.add_argument('--discriminator', default='models/final/discriminator-010804.pth', type=str, metavar='PATH', help='path to discriminator model (as PyTorch state dict)')
+    parser.add_argument('--openface', default='models/final/openface-20180119.pth', type=str, metavar='PATH', help='path to OpenFace one-shot model (as PyTorch state dict)')
+    parser.add_argument('--encoder', default='models/inprogress/encoder/', type=str, metavar='PATH', help='path to encoder model working directory')
     parser.add_argument('--seed', default=314159, type=int)
 
     args = parser.parse_args()
@@ -186,7 +179,7 @@ if __name__ == '__main__':
     print(f'OpenFace      parameters: {sum((np.prod(p.size()) for p in openface.parameters()))} total, {sum((np.prod(p.size()) for p in openface.parameters() if p.requires_grad))} free')
 
     data = FacesDataset(args.images)
-    dataloader = torch.utils.data.DataLoader(data, batch_size=1, shuffle=True, num_workers=4)
+    dataloader = torch.utils.data.DataLoader(data, batch_size=8, shuffle=True, num_workers=4)
 
     optimiser = torch.optim.Adam(encoder.parameters())
     

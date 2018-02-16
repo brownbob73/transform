@@ -12,7 +12,7 @@ from torchvision import datasets, transforms, utils
 class FacesDataset(torch.utils.data.Dataset):
     def __init__(self, rootdir):
         self.rootdir = rootdir
-        self.paths = [entry.path for entry in os.scandir(rootdir) if entry.is_file() and not entry.name.startswith('.') and entry.name.endswith('.jpg')]
+        self.paths = [entry.path for entry in os.scandir(rootdir) if entry.is_file() and not entry.name.startswith('.') and entry.name.endswith('.png')]
 
 
     def __len__(self):

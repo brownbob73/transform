@@ -26,7 +26,7 @@ import theano.tensor as T
 import lasagne
 
 from decoder import Decoder as Generator
-from encoder import Discriminator as Discriminator
+from discriminator import Discriminator as Discriminator
 
 
 parser = argparse.ArgumentParser(description='Weight transfer script')

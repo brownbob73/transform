@@ -15,7 +15,7 @@ class Encoder(nn.Module):
         super(Encoder, self).__init__()
 
         self.layers = nn.Sequential(OrderedDict([
-            ('fc1', nn.Linear(128, 32)),
+            ('fc1', nn.Linear(320, 32)),
             ('fc1n', nn.LeakyReLU()),
             ('fc2', nn.Linear(32, 32)),
             ('fc2n', nn.LeakyReLU()),

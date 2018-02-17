@@ -319,8 +319,8 @@ class netOpenFace(nn.Module):
         return (x, x_736)
 
 
-def prepareOpenFace(path, useMultiGPU=False):
-    model = netOpenFace(useCuda=True)
+def prepareOpenFace(path, useCuda=True, useMultiGPU=False):
+    model = netOpenFace(useCuda)
     model.load_state_dict(torch.load(path))
 
     if useMultiGPU:

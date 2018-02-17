@@ -142,18 +142,10 @@ def Conv2d(in_dim, out_dim, kernel, stride, padding):
     l = torch.nn.Conv2d(in_dim, out_dim, kernel, stride=stride, padding=padding)
     return l
 
-def BatchNorm(dim):
-    l = torch.nn.BatchNorm2d(dim)
-    return l
-
 def CrossMapLRN(size, alpha, beta, k=1.0, gpuDevice=0):
     lrn = SpatialCrossMapLRN_temp(size, alpha, beta, k, gpuDevice=gpuDevice)
     n = Lambda( lambda x,lrn=lrn: Variable(lrn.forward(x.data).cuda(gpuDevice)) if x.data.is_cuda else Variable(lrn.forward(x.data)) )
     return n
-
-def Linear(in_dim, out_dim):
-    l = torch.nn.Linear(in_dim, out_dim)
-    return l
 
 
 class Inception(nn.Module):
@@ -172,13 +164,13 @@ class Inception(nn.Module):
             # 1x1 conv
             od['1_conv'] = Conv2d(inputSize, reduceSize[i], (1, 1), reduceStride[i] if reduceStride is not None else 1, (0,0))
             if useBatchNorm:
-                od['2_bn'] = BatchNorm(reduceSize[i])
+                od['2_bn'] = nn.BatchNorm2d(reduceSize[i])
             od['3_relu'] = nn.ReLU()
             # nxn conv
             pad = int(numpy.floor(kernelSize[i] / 2)) if padding else 0
             od['4_conv'] = Conv2d(reduceSize[i], outputSize[i], kernelSize[i], kernelStride[i], pad)
             if useBatchNorm:
-                od['5_bn'] = BatchNorm(outputSize[i])
+                od['5_bn'] = nn.BatchNorm2d(outputSize[i])
             od['6_relu'] = nn.ReLU()
             #
             self.seq_list.append(nn.Sequential(od))
@@ -191,7 +183,7 @@ class Inception(nn.Module):
             i = ii
             od['2_conv'] = Conv2d(inputSize, reduceSize[i], (1,1), reduceStride[i] if reduceStride is not None else 1, (0,0))
             if useBatchNorm:
-                od['3_bn'] = BatchNorm(reduceSize[i])
+                od['3_bn'] = nn.BatchNorm2d(reduceSize[i])
             od['4_relu'] = nn.ReLU()
         #
         self.seq_list.append(nn.Sequential(od))
@@ -203,7 +195,7 @@ class Inception(nn.Module):
             od = OrderedDict()
             od['1_conv'] = Conv2d(inputSize, reduceSize[i], (1,1), reduceStride[i] if reduceStride is not None else 1, (0,0))
             if useBatchNorm:
-                od['2_bn'] = BatchNorm(reduceSize[i])
+                od['2_bn'] = nn.BatchNorm2d(reduceSize[i])
             od['3_relu'] = nn.ReLU()
             self.seq_list.append(nn.Sequential(od))
 
@@ -255,15 +247,15 @@ class netOpenFace(nn.Module):
         self.gpuDevice = gpuDevice
 
         self.layer1 = Conv2d(3, 64, (7,7), (2,2), (3,3))
-        self.layer2 = BatchNorm(64)
+        self.layer2 = nn.BatchNorm2d(64)
         self.layer3 = nn.ReLU()
         self.layer4 = nn.MaxPool2d((3,3), stride=(2,2), padding=(1,1))
         self.layer5 = CrossMapLRN(5, 0.0001, 0.75, gpuDevice=gpuDevice)
         self.layer6 = Conv2d(64, 64, (1,1), (1,1), (0,0))
-        self.layer7 = BatchNorm(64)
+        self.layer7 = nn.BatchNorm2d(64)
         self.layer8 = nn.ReLU()
         self.layer9 = Conv2d(64, 192, (3,3), (1,1), (1,1))
-        self.layer10 = BatchNorm(192)
+        self.layer10 = nn.BatchNorm2d(192)
         self.layer11 = nn.ReLU()
         self.layer12 = CrossMapLRN(5, 0.0001, 0.75, gpuDevice=gpuDevice)
         self.layer13 = nn.MaxPool2d((3,3), stride=(2,2), padding=(1,1))
@@ -275,11 +267,7 @@ class netOpenFace(nn.Module):
         self.layer19 = Inception(1024, (3,), (1,), (384,), (96,96,256), nn.LPPool2d(2, (3,3), stride=(3,3)), True)
         self.layer21 = Inception(736, (3,), (1,), (384,), (96,96,256), nn.MaxPool2d((3,3), stride=(2,2), padding=(0,0)), True)
         self.layer22 = nn.AvgPool2d((3,3), stride=(1,1), padding=(0,0))
-        self.layer25 = Linear(736, 128)
-
-        #
-        self.resize1 = nn.UpsamplingNearest2d(scale_factor=3)
-        self.resize2 = nn.AvgPool2d(4)
+        self.layer25 = nn.Linear(736, 128)
 
         #
         # self.eval()
@@ -294,10 +282,6 @@ class netOpenFace(nn.Module):
         if x.data.is_cuda and self.gpuDevice != 0:
             x = x.cuda(self.gpuDevice)
 
-        #
-        if x.size()[-1] == 128:
-            x = self.resize2(self.resize1(x))
-
         x = self.layer8(self.layer7(self.layer6(self.layer5(self.layer4(self.layer3(self.layer2(self.layer1(x))))))))
         x = self.layer13(self.layer12(self.layer11(self.layer10(self.layer9(x)))))
         x = self.layer14(x)
@@ -310,13 +294,11 @@ class netOpenFace(nn.Module):
         x = self.layer22(x)
         x = x.view((-1, 736))
 
-        x_736 = x
-
         x = self.layer25(x)
-        x_norm = torch.sqrt(torch.sum(x**2, 1) + 1e-6)
+        x_norm = torch.sqrt(torch.sum(torch.pow(x, 2), 1) + 1e-6)
         x = torch.div(x, x_norm.view(-1, 1).expand_as(x))
 
-        return (x, x_736)
+        return x
 
 
 def prepareOpenFace(path, useCuda=True, useMultiGPU=False):

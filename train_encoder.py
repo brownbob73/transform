@@ -60,7 +60,7 @@ class Evaluator:
 
         latent_input_features = torch.cat([input_id_128, input_8_rescaled_linear], 1)
         latent_512 = self.encoder(latent_input_features).view(-1, 512, 1, 1)
-        error_norm = torch.norm(input=latent_512, p=2, dim=1).squeeze()
+        latent_norm = torch.sum(torch.pow(latent_512, 2).squeeze(2).squeeze(2), dim=1)
 
         output_1024 = self.decoder(latent_512)
         output_96 = self.downscale_8x(self.upscale_768(self.downscale_8x(output_1024)))
@@ -79,10 +79,13 @@ class Evaluator:
         # similarity = torch.sum(input_id_128 * output_id_128, dim=1) / torch.norm(input_id_128, dim=1) / torch.norm(output_id_128, dim=1)
         similarity = nn.CosineSimilarity()(input_id_128, output_id_128)
 
-#        loss = torch.mean(-similarity + error_sse + error_norm) #+ error_discrim
-#        loss = torch.mean(-similarity)
-        loss = torch.mean(error_sse + torch.abs(error_norm - 22.6)*10)
-        return loss, (-similarity, error_norm, error_sse, error_discrim), output_1024
+        loss_sse = error_sse / 100
+        loss_norm = torch.abs(latent_norm - 512) / 82
+        loss_similarity = similarity / -0.11
+        loss_discrim = 0
+
+        loss = torch.mean(loss_sse + loss_norm)
+        return loss, (loss_similarity, loss_norm, loss_sse, loss_discrim), output_1024
 
 
 
@@ -136,7 +139,7 @@ def show_grid(input, output):
 
 def save_grid(input, output, file):
     images = torch.cat((input.data, output.data), 0)
-    images = save_image(images, file, padding=10, normalize=True, scale_each=True)
+    save_image(images, file, padding=10, normalize=True, scale_each=True)
 
 
 def train_encoder_batch(input, evaluator, optimiser, i_batch, i_epoch):
@@ -151,9 +154,19 @@ def train_encoder_batch(input, evaluator, optimiser, i_batch, i_epoch):
         save_grid(input, output_rescaled, f'chk{i_epoch}_{i_batch}.jpg')
 
 
-if __name__ == '__main__':
-    print(torch.mean(torch.norm(input=torch.normal(means=torch.zeros(10000, 512, 1, 1), std=1).cuda(), p=2, dim=1).squeeze()))
 
+def test_decoder_norm(decoder):
+    for norm in [0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]:
+        for i in range(20):
+            x = Variable(torch.randn(1, 512, 1, 1).cuda(), requires_grad=False)
+            x = x / 512 * norm
+            y = decoder(x)
+    #        y = (y - torch.min(y))/(torch.max(y)-torch.min(y))
+            save_image(y.data, f'test_{norm}_{i}.jpg', padding=10, normalize=True, scale_each=True)
+
+
+
+if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -170,6 +183,7 @@ if __name__ == '__main__':
     torch.cuda.manual_seed(args.seed)
 
     decoder = load_decoder(args.decoder).cuda()
+    test_decoder_norm(decoder)
     encoder = load_encoder(args.encoder).cuda()
     discriminator = load_discriminator(args.discriminator).cuda()
     openface = prepareOpenFace(args.openface, useCuda=True).eval()

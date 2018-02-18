@@ -40,8 +40,8 @@ class Evaluator:
             p.requires_grad = False
         for p in self.discriminator.parameters():
             p.requires_grad = False
-        for p in self.openface.parameters():
-            p.requires_grad = False
+        # for p in self.openface.parameters():
+        #     p.requires_grad = False
 
 
     def loss(self, input_1024):
@@ -84,7 +84,8 @@ class Evaluator:
         loss_similarity = similarity / -0.11
         loss_discrim = 0
 
-        loss = torch.mean(loss_sse + loss_norm)
+        #loss = torch.mean(loss_sse + loss_norm)
+        loss = torch.mean(loss_similarity)
         return loss, (loss_similarity, loss_norm, loss_sse, loss_discrim), output_1024
 
 
@@ -156,13 +157,43 @@ def train_encoder_batch(input, evaluator, optimiser, i_batch, i_epoch):
 
 
 def test_decoder_norm(decoder):
-    for norm in [0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024]:
-        for i in range(20):
-            x = Variable(torch.randn(1, 512, 1, 1).cuda(), requires_grad=False)
-            x = x / 512 * norm
-            y = decoder(x)
-    #        y = (y - torch.min(y))/(torch.max(y)-torch.min(y))
-            save_image(y.data, f'test_{norm}_{i}.jpg', padding=10, normalize=True, scale_each=True)
+    # Conclusions from testing:
+    #  1) Decoder is extremely resistant to norm of latent vector.  Expected values from 1 to 2048 produce almost identical results.
+    #  2) Decoder is fairly reisistant to mean of latent vector.  Expected values from -0.1 to 0.1 produce little change.
+    #  3) No apparent pattern in LVs that produce poor-quality results.  Assume just under-sampled in the face space.
+    #  4) Forcing LVs to lie on the surface of the 512D hypersphere shows no improvement.  (expected from 1)
+    #  5) As suggested by 1, the decoder is effectively projecting the LV to the surface of the hypersphere before calculation;
+    #     it is almost as if it uses only vector directions.
+
+    # In retrospect the above behaviour is obvious, considering the exclusive use of ReLUs in the generator, and the final
+    # normalization stages (PixelNorm, then later image normalization).
+
+    for norm in [0.0625, 0.125, 0.25, 0.5, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096]:
+        torch.manual_seed(314159)
+        ytot_set = False
+        for row in range(4):
+            yrow_set = False
+            for col in range(6):
+                x = Variable(torch.randn(1, 512, 1, 1).cuda(), volatile=True)
+                x = x / 512.0 * norm
+                print(f'{row+1}, {col+1}, {torch.mean(x).data[0]:.5}, {torch.min(x).data[0]:.5}, {torch.max(x).data[0]:.5}, {torch.sum(torch.pow(x, 2)).data[0]:.5}')
+                y = decoder(x)
+                y = (y - torch.min(y))/(torch.max(y)-torch.min(y))
+                y = torch.nn.AvgPool2d(4)(y).squeeze().cpu()
+
+                if yrow_set == False:
+                    yrow_set = True
+                    yrow = y
+                else:
+                    yrow = torch.cat((yrow, y), 2)
+                del y
+            if ytot_set == False:
+                ytot_set = True
+                ytot = yrow
+            else:
+                ytot = torch.cat((ytot, yrow), 1)
+
+        save_image(ytot.data, f'test_{norm}.jpg', padding=10, normalize=False, scale_each=False)
 
 
 
@@ -195,8 +226,8 @@ if __name__ == '__main__':
         p.requires_grad = False
     for p in discriminator.parameters():
         p.requires_grad = False
-    for p in openface.parameters():
-        p.requires_grad = False
+    # for p in openface.parameters():
+    #     p.requires_grad = False
 
     print(f'Decoder       parameters: {sum((np.prod(p.size()) for p in decoder.parameters()))} total, {sum((np.prod(p.size()) for p in decoder.parameters() if p.requires_grad))} free')
     print(f'Discriminator parameters: {sum((np.prod(p.size()) for p in discriminator.parameters()))} total, {sum((np.prod(p.size()) for p in discriminator.parameters() if p.requires_grad))} free')
